@@ -1,0 +1,19 @@
+{
+  "name": "امسك حرامي — Catch the Thief",
+  "short_name": "امسك حرامي",
+  "description": "لعبة ظباط وحرامي متنكّر في قرى من 5 دول. A disguised-thief party game set in 5 countries.",
+  "lang": "ar",
+  "dir": "auto",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#172033",
+  "theme_color": "#172033",
+  "categories": ["games"],
+  "icons": [
+    {"src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png"},
+    {"src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ]
+}
