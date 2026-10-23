@@ -1,1 +1,4 @@
-/* Filled automatically when you build the app (store-app/copy-web.js downloads Lalezar + Readex Pro, SIL OFL). On the web the Google Fonts link is used instead. */
+/* Lalezar + Readex Pro, SIL Open Font License 1.1 (see OFL-*.txt). Bundled so the game works offline and inside the store apps. */
+@font-face{font-family:'Lalezar';font-style:normal;font-weight:400;font-display:swap;src:url(lalezar.woff) format('woff')}
+@font-face{font-family:'Readex Pro';font-style:normal;font-weight:400;font-display:swap;src:url(readexpro-400.woff) format('woff')}
+@font-face{font-family:'Readex Pro';font-style:normal;font-weight:600;font-display:swap;src:url(readexpro-600.woff) format('woff')}
