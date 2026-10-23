@@ -1657,8 +1657,19 @@ const S=(function(){
   const save=()=>{try{localStorage.setItem('tv-sound',JSON.stringify(st));}catch(_){}};
   const last={}, GAP={scream:0.8,whistle:1,bang:0.5,tick:0.4,wrong:0.3,reveal:1.5,jail:0.6,coins:0.3,whoosh:0.3,unwhoosh:0.3,pop:0.12,count:0.6,win:2,lose:2};
   const DUCK={scream:1.2,wrong:1,reveal:1.8,jail:1.5,coins:1.1,win:2.5,lose:2.5};
+  /* iPhone: Web Audio is silenced by the ring/silent switch unless the page asks for "playback" audio;
+     a tiny looping silent <audio> element does the same on older iOS. Must start inside a tap. */
+  let silentEl=null;
+  function unlockIOS(){
+    try{ if(navigator.audioSession&&navigator.audioSession.type!=='playback') navigator.audioSession.type='playback'; }catch(_){}
+    if(silentEl||!/iP(hone|ad|od)|Macintosh/.test(navigator.userAgent)||!('ontouchend' in document)) return;
+    try{ silentEl=document.createElement('audio'); silentEl.setAttribute('playsinline',''); silentEl.loop=true; silentEl.volume=0.01;
+      silentEl.src='data:audio/wav;base64,UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSADAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA==';
+      const p=silentEl.play(); if(p) p.catch(()=>{ silentEl=null; }); }catch(_){ silentEl=null; }
+  }
   function init(){
-    if(ctx){ if(ctx.state==='suspended'&&!document.hidden) ctx.resume().catch(()=>{}); return; }
+    unlockIOS();
+    if(ctx){ if(ctx.state!=='running'&&ctx.state!=='closed'&&!document.hidden) ctx.resume().catch(()=>{}); return; }
     const AC=window.AudioContext||window.webkitAudioContext; if(!AC) return;
     try{ctx=new AC({latencyHint:'interactive'});}catch(_){try{ctx=new AC();}catch(__){return;}}
     const comp=ctx.createDynamicsCompressor();
@@ -1730,7 +1741,8 @@ const S=(function(){
   }
   function startMusic(){ wantMusic=true; if(!ctx||musicTimer) return; nextNote=ctx.currentTime+0.1; step=0; musicTimer=setInterval(sched,100); }
   function stopMusic(){ wantMusic=false; clearInterval(musicTimer); musicTimer=null; }
-  document.addEventListener('visibilitychange',()=>{ if(!ctx) return; if(document.hidden) ctx.suspend().catch(()=>{}); else ctx.resume().catch(()=>{}); });
+  document.addEventListener('visibilitychange',()=>{ if(!ctx) return; if(document.hidden){ ctx.suspend().catch(()=>{}); if(silentEl) silentEl.pause(); } else { ctx.resume().catch(()=>{}); if(silentEl) silentEl.play().catch(()=>{}); } });
+  addEventListener('pageshow',()=>{ if(ctx&&ctx.state!=='running') ctx.resume().catch(()=>{}); });
 
   /* opening intro soundtrack: a sneaky chase tune, footsteps, a record scratch + slide whistle + thud when
      the officer trips, twinkling stars, the thief's laugh, and a small fanfare when the game opens */
@@ -1770,6 +1782,8 @@ const S=(function(){
     toggleMute(){st.muted=!st.muted;save();apply();return st.muted;}};
 })();
 addEventListener('pointerdown',()=>S.init(),true);
+addEventListener('touchend',()=>S.init(),true);
+addEventListener('click',()=>S.init(),true);
 addEventListener('keydown',()=>S.init(),true);
 
 /* ---------- core actions ---------- */
