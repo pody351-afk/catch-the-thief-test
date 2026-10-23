@@ -2398,7 +2398,7 @@ const PEER_PREFIX='hfq-thiefvillage-v1-';
 /* Store-build config. TURN credentials are NOT kept in the code any more: TV_CONFIG.turnUrl points at a small
    endpoint (see server/turn-worker.js) that returns short-lived credentials. Without it, STUN only. */
 const TV_CONFIG=Object.assign({
-  turnUrl:'',            // e.g. 'https://turn.yourdomain.workers.dev/ice'
+  turnUrl:'https://catch-the-thief-turn.amskhramy096.workers.dev/ice',            // e.g. 'https://turn.yourdomain.workers.dev/ice'
   peer:null,             // own PeerJS server, e.g. {host:'peer.yourdomain.com',port:443,path:'/',secure:true}
   supportEmail:'amskhramy096@gmail.com'
 },window.TV_CONFIG||{});
