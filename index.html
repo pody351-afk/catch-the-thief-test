@@ -6,9 +6,6 @@
 <title>امسك حرامي</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="fonts/fonts.css">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lalezar&family=Readex+Pro:wght@400;600&display=swap">
 <style>
 /* Layout: full-bleed 3D village; HUD floats in the safe-area corners; menus are centered cards over the live scene */
 :root{
@@ -2855,17 +2852,31 @@ syncSnd(); syncLobby(); toLobby();
 
 /* ---------- loop ---------- */
 let last=performance.now();
-function frame(t){
-  requestAnimationFrame(frame);
-  const dt=Math.min(0.05,(t-last)/1000); last=t; const now=t/1000;
+/* one simulation step (dt ≤ 0.05 s) */
+function step(dt,now){
   if(game.state==='reveal'){game.revealT-=dt; if(game.revealT<=0){game.state='play';$('reveal').hidden=true;}}
   const live=game.state==='play';
   if(live&&game.time<=10){const sec=Math.ceil(game.time); if(sec!==game.lastSec){game.lastSec=sec; if(sec>0) S.play('count');}}
   if(live){game.time-=dt; if(game.time<=0){game.time=0; if(NET.mode!=='client') endRound('thieves','time');}}
-  netTick(dt); simulate(dt,game.state==='play',now); tickParticles(dt); tickCeleb(dt,now); tickKeepers(dt,now); ambient.tick(dt,now); updateCamera(dt,false); updateHUD();
+  netTick(dt); simulate(dt,game.state==='play',now); tickParticles(dt); tickCeleb(dt,now); tickKeepers(dt,now); ambient.tick(dt,now);
   if(toastT>0){toastT-=dt;if(toastT<=0)toastEl.hidden=true;}
+}
+/* slow phones: catch up in small steps (up to 0.25 s per frame) instead of running in slow motion */
+function advance(t,cap){
+  let el=Math.min(cap,Math.max(0,(t-last)/1000)); last=t; const now=t/1000;
+  while(el>1e-4){ const d=Math.min(0.05,el); step(d,now); el-=d; }
+}
+function frame(t){
+  requestAnimationFrame(frame);
+  const fd=Math.min(0.25,Math.max(0,(t-last)/1000)); advance(t,0.25); updateCamera(fd,false); updateHUD();
   renderer.render(scene,camera);
 }
+/* the host keeps the round running for everyone while its tab/app is in the background */
+let bgTimer=0;
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden&&NET.mode==='host'&&!bgTimer){ bgTimer=setInterval(()=>{ if(!document.hidden||NET.mode!=='host'){ clearInterval(bgTimer); bgTimer=0; return; } advance(performance.now(),1.2); },250); }
+  else if(!document.hidden&&bgTimer){ clearInterval(bgTimer); bgTimer=0; last=performance.now(); }
+});
 requestAnimationFrame(frame);
 /* open the game with #debug at the end of the address to inspect state from the browser console */
 if(location.hash==='#debug') window.__tv={get scene(){return scene;},get game(){return game;},get ents(){return ents;},get player(){return player;},get keepers(){return keepers;},houses,renderer,NET,setCountry,get country(){return curCountry;},get lang(){return LANG;},T,get roomApi(){return roomApi;},camera,get centre(){return centre;},setVillage,cfg,startRound,makeSetup,get map(){return curMap;},get wps(){return wps;},get cam(){return cam;},endRound,get celeb(){return celeb;},arrestThief,freeThief,canCop,copDisguise,jailedMate};
