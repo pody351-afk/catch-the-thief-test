@@ -32,7 +32,8 @@ export class Lobby {
     const u = new URL(req.url), now = Date.now();
     this.prune(now);
     if (u.pathname === '/assign') {
-      const open = [...this.rooms].filter(([, r]) => !r.busy && r.n < MAX).sort((a, b) => b[1].n - a[1].n).slice(0, 3);
+      // only rooms whose host has already sent a heartbeat are joinable; a bare reservation (fresh) has no host yet
+      const open = [...this.rooms].filter(([, r]) => !r.fresh && !r.busy && r.n < MAX).sort((a, b) => b[1].n - a[1].n).slice(0, 3);
       const slots = open.map(([s]) => s);
       let fresh = 1; while (this.rooms.has(fresh)) fresh++;
       // reserve a seat so a burst of players does not all get the same room
