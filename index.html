@@ -2627,6 +2627,8 @@ const PEER_PREFIX='hfq-thiefvillage-v1-';
 const TV_CONFIG=Object.assign({
   fbAppId:'',            // Facebook App ID (Meta for Developers) to turn on the optional Facebook sign-in
   turnUrl:'https://catch-the-thief-turn.amskhramy096.workers.dev/ice',            // e.g. 'https://turn.yourdomain.workers.dev/ice'
+  matchUrl:'',           // public-room matchmaker, e.g. 'https://catch-the-thief-match.yourname.workers.dev' (server/matchmaker)
+  matchShards:1,         // raise (up to 64) when one country has very many players at once
   peer:null,             // own PeerJS server, e.g. {host:'peer.yourdomain.com',port:443,path:'/',secure:true}
   supportEmail:'amskhramy096@gmail.com'
 },window.TV_CONFIG||{});
@@ -2707,26 +2709,49 @@ function makePeerRoom(Peer){
   api.warm=async()=>{ if(!api.me||api.me.destroyed||api.me.disconnected) api.me=await openPeer(null); };
   /* a brand-new code: nobody can be there yet, so claim it straight away instead of probing first */
   api.create=async roomKey=>{ const h=await becomeHost(PEER_PREFIX+roomKey+'-1'); if(h==='ok') return {isHost:true}; if(h==='error') throw new Error('net'); return api.join(roomKey); };
-  api.join=async (roomKey,skipBusy)=>{
-    for(let slot=1;slot<=(skipBusy?12:3);slot++){
-      const hostId=PEER_PREFIX+roomKey+'-'+slot;
+  const tryHostSlots=async (slots,mk,skipBusy)=>{
+    for(const slot of slots){
+      const hostId=mk(slot);
       for(let attempt=0;attempt<3;attempt++){
         const r=await tryClient(hostId,skipBusy);
-        if(r==='ok') return {isHost:false};
+        if(r==='ok') return {isHost:false,slot};
         if(r==='full') break;
         if(r==='error') throw new Error('net');
         const h=await becomeHost(hostId);              /* nobody there (or unreachable): claim the room */
-        if(h==='ok') return {isHost:true};
+        if(h==='ok') return {isHost:true,slot};
         if(h==='error') throw new Error('net');
         if(r==='timeout'&&attempt>0) throw new Error('net'); /* the host exists but can't be reached */
       }
     }
+    return null;
+  };
+  /* public rooms: ask the matchmaker which slots are open; hosts report their player count so rooms fill up evenly */
+  const mmUrl=(path,q)=>TV_CONFIG.matchUrl.replace(/\/+$/,'')+path+'?'+new URLSearchParams(q).toString();
+  const mmCall=async (path,q,ms)=>{ const ctl=new AbortController(), t=setTimeout(()=>ctl.abort(),ms||2500);
+    try{ const r=await fetch(mmUrl(path,q),{signal:ctl.signal,cache:'no-store'}); if(!r.ok) throw 0; return await r.json(); } finally{ clearTimeout(t); } };
+  const mmStart=(roomKey,sh,slot)=>{ clearInterval(api.mmTimer); if(!api.isHost) return;
+    const beat=()=>{ if(api.closed||!api.isHost) return clearInterval(api.mmTimer);
+      const n=1+api.members.size, b=(api.busy&&api.busy())?1:0;
+      fetch(mmUrl('/hb',{k:roomKey,sh,s:slot,n,b}),{cache:'no-store',keepalive:true}).catch(()=>{}); };
+    beat(); api.mmTimer=setInterval(beat,5000); api.mm={roomKey,sh,slot}; };
+  api.join=async (roomKey,skipBusy)=>{
+    if(skipBusy&&TV_CONFIG.matchUrl&&/^pub-/.test(roomKey)){
+      try{
+        const SH=Math.min(Math.max(+TV_CONFIG.matchShards||1,1),64), sh=SH>1?Math.floor(Math.random()*SH):0;
+        const a=await mmCall('/assign',{k:roomKey,sh}); const list=a&&Array.isArray(a.slots)?a.slots.filter(x=>x>=1&&x<=100000).slice(0,6):[];
+        if(list.length){ const r=await tryHostSlots(list,s=>PEER_PREFIX+roomKey+(sh?'s'+sh:'')+'-'+s,true);
+          if(r){ if(r.isHost) mmStart(roomKey,sh,r.slot); return {isHost:r.isHost}; } }
+      }catch(e){ if(e&&e.message==='net') throw e; /* matchmaker down or slow: fall back to the classic slot scan below */ }
+    }
+    const r=await tryHostSlots(Array.from({length:skipBusy?12:3},(_,i)=>i+1),s=>PEER_PREFIX+roomKey+'-'+s,skipBusy);
+    if(r) return {isHost:r.isHost};
     throw new Error('full');
   };
   api.joinDirect=async hostId=>{ const r=await tryClient(hostId,false); if(r==='ok') return {isHost:false}; throw new Error(r==='full'?'full':(r==='nohost'?'gone':'net')); };
   api.kick=pid=>{ const c=api.members.get(pid); if(!c) return; try{ if(c.open) c.send({t:'full'}); }catch(_){} setTimeout(()=>{ try{c.close();}catch(_){} },300);
     api.members.delete(pid); api.others.delete(pid); api.dirty=true; };
-  api.close=()=>{ api.closed=true; clearInterval(api.timer);
+  api.close=()=>{ api.closed=true; clearInterval(api.timer); clearInterval(api.mmTimer);
+    if(api.mm){ try{ fetch(mmUrl('/leave',{k:api.mm.roomKey,sh:api.mm.sh,s:api.mm.slot}),{keepalive:true}).catch(()=>{}); }catch(_){} }
     try{ if(api.conn) api.conn.close(); }catch(_){} for(const c of api.members.values()){ try{c.close();}catch(_){} }
     try{ if(api.host) api.host.destroy(); }catch(_){} try{ if(api.me) api.me.destroy(); }catch(_){} };
   return api;
