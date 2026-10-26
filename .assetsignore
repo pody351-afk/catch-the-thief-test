@@ -1,0 +1,5 @@
+server
+wrangler.toml
+.assetsignore
+README.md
+.git
