@@ -613,7 +613,7 @@ document.body.classList.toggle('touch',isTouch);
 /* ---------- renderer ---------- */
 const stage=$('stage');
 let renderer;
-try{ renderer=new THREE.WebGLRenderer({antialias:true}); }
+try{ renderer=new THREE.WebGLRenderer({antialias:!(isTouch&&devicePixelRatio>=2),powerPreference:'high-performance'}); }
 catch(err){ fatal('fail.webgl'); return; }
 renderer.setPixelRatio(Math.min(devicePixelRatio,isTouch?1.5:2));
 renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
@@ -630,6 +630,29 @@ sun.position.set(18,32,14); sun.castShadow=true;
 sun.shadow.mapSize.set(isTouch?1024:2048,isTouch?1024:2048);
 Object.assign(sun.shadow.camera,{left:-38,right:38,top:38,bottom:-38,near:1,far:90});
 sun.shadow.bias=-0.0008; scene.add(sun);
+/* adaptive quality: starts from what the device can probably do, steps down by itself when frames take too long,
+   and remembers the level (it creeps back up after a couple of days). Levels: 0 full, 1 cheaper shadow filter,
+   2 lower resolution, 3 shadows refreshed every other frame, 4 low resolution, 5 no shadows */
+const QL={lv:0,max:5,ema:16.7,bad:0,warm:180,applied:-1,fr:0};
+try{ const s=(localStorage.getItem('tv-q')||'').split('|'); let v=+s[0]||0; if(v>0&&Date.now()-(+s[1]||0)>2*864e5) v--; QL.lv=Math.max(0,Math.min(QL.max,v)); }catch(_){}
+if(QL.lv===0&&isTouch&&((navigator.deviceMemory&&navigator.deviceMemory<=3)||(navigator.hardwareConcurrency&&navigator.hardwareConcurrency<=4))) QL.lv=1;
+const MAXPR=Math.min(devicePixelRatio,isTouch?1.5:2);
+function applyQuality(){
+  const l=QL.lv; if(QL.applied===l) return; const first=QL.applied<0; QL.applied=l;
+  renderer.setPixelRatio([MAXPR,MAXPR,Math.min(MAXPR,1.25),Math.min(MAXPR,1.25),1,0.85][l]); resize();
+  const sm=renderer.shadowMap, wasOn=sm.enabled, wasType=sm.type;
+  sm.enabled=l<5; sm.type=l>=1?THREE.PCFShadowMap:THREE.PCFSoftShadowMap; sm.autoUpdate=!(l>=3&&l<5);
+  const ms=(isTouch?1024:2048)>>(l>=1?1:0);
+  if(sun.shadow.mapSize.x!==ms){ sun.shadow.mapSize.set(ms,ms); if(sun.shadow.map){ sun.shadow.map.dispose(); sun.shadow.map=null; } }
+  if(!first&&(wasOn!==sm.enabled||wasType!==sm.type)) scene.traverse(o=>{ if(o.material) [].concat(o.material).forEach(m=>{ m.needsUpdate=true; }); });
+  sm.needsUpdate=true;
+}
+function qMonitor(rdt){
+  if(document.hidden||rdt>250) return; if(QL.warm>0){ QL.warm--; return; }
+  QL.ema+=(rdt-QL.ema)*0.06; if(QL.ema>36) QL.bad++; else QL.bad=Math.max(0,QL.bad-2);
+  if(QL.bad>120&&QL.lv<QL.max){ QL.lv++; QL.bad=0; QL.ema=16.7; QL.warm=150; try{ localStorage.setItem('tv-q',QL.lv+'|'+Date.now()); }catch(_){} applyQuality(); }
+}
+applyQuality();
 
 const matCache={};
 const mat=(c,o)=>{const k=c+(o?JSON.stringify(o):'');return matCache[k]||(matCache[k]=new THREE.MeshLambertMaterial(Object.assign({color:c},o||{})));};
@@ -2735,6 +2758,7 @@ async function joinRoom(key,country,pub,create,direct){
 }
 function setRoomButtons(on){ document.querySelectorAll('#onRooms button,#onJoin,#onCreate').forEach(b=>b.disabled=!on); }
 function enterRoom(code,asHost,country,pub){
+  try{ inboxStart(); }catch(_){}
   Object.assign(NET,{mode:asHost?'host':'client',code,pub,country:country||NET.country,round:0,seen:-1,events:[],acts:[],hostGone:0,lastHostPres:null,su:null,joinedAt:performance.now()/1000});
   NET.myPeer=(roomApi.peers().find(p=>p.sameTab)||{}).peer||null; NET.autoOn=false; NET.autoT=0; NET.autoN=0; NET.autoShown=0;
   if(roomApi.kind==='peer') roomApi.busy=()=>NET.round>0;
@@ -2896,7 +2920,7 @@ function frRender(){
     else (FBF||[]).forEach(f=>{ const li=document.createElement('li'); li.className='fr-row'; const n=document.createElement('span'); n.textContent='🔵 '+f.name+(inRoom.has(f.id)?'  '+T('pf.inRoom'):'');
       li.appendChild(n); if(!isFriend(f.id)){ const b=document.createElement('button'); b.type='button'; b.className='ghost mini'; b.textContent=T('pf.follow'); b.textContent=isPend(f.id)?T('pf.pending'):T('pf.follow'); b.disabled=isPend(f.id); b.onclick=()=>{ sendRequest(f.id,f.name); frRender(); }; li.appendChild(b); } fl.appendChild(li); }); }
 }
-$('friendsBtn').onclick=()=>{ $('lobby').hidden=true; $('friends').hidden=false; frRender(); frPing(); if(PROF.fb&&FBID) fbFriends().then(()=>{ if(!$('friends').hidden) frRender(); }); };
+$('friendsBtn').onclick=()=>{ $('lobby').hidden=true; $('friends').hidden=false; frRender(); inboxStart(); frPing(); if(PROF.fb&&FBID) fbFriends().then(()=>{ if(!$('friends').hidden) frRender(); }); };
 $('onInvFr').onclick=()=>{ if(!NET.mode){ $('onMsg').textContent=T('pf.invNeed'); return; } $('online').hidden=true; $('friends').hidden=false; frRender(); frPing(); };
 $('frClose').onclick=()=>{ $('friends').hidden=true; if(NET.mode) $('online').hidden=false; else $('lobby').hidden=false; };
 $('onInvite').onclick=async()=>{ const room=NET.pub?T('c.'+NET.country):'#'+NET.code.replace(/^p-/,''); const text=T('pf.inviteText',{room}), url=location.href.split('#')[0].split('?')[0];
@@ -2993,9 +3017,10 @@ function inboxFlush(){
   for(const id of plist('ack').slice(0,5)) setTimeout(()=>inboxSend(id,Object.assign({t:'fa'},me()),4000).then(r=>{ if(r==='ok'){ PROF.ack=plist('ack').filter(x=>x!==id); saveProf(); } }),(i++)*500);
 }
 function frPing(){ if(!INBOX.ok) return; PROF.friends.slice(0,30).forEach((f,i)=>setTimeout(()=>inboxSend(f.id,Object.assign({t:'ping'},me()),3500).then(r=>{ const was=INBOX.on.get(f.id); INBOX.on.set(f.id,r==='ok'); if(was!==(r==='ok')&&!$('friends').hidden) frRender(); }),i*250)); }
-setInterval(()=>{ if(document.hidden) return; if(!INBOX.p&&!INBOX.starting) inboxStart(); else if(INBOX.p&&INBOX.p.disconnected&&!INBOX.p.destroyed){ try{ INBOX.p.reconnect(); }catch(_){} } else inboxFlush(); },30000);
-document.addEventListener('visibilitychange',()=>{ if(!document.hidden){ if(!INBOX.p) inboxStart(); else if(INBOX.p.disconnected){ try{ INBOX.p.reconnect(); }catch(_){} } } });
-setTimeout(inboxStart,1200); frBadge();
+setInterval(()=>{ if(document.hidden) return; if(!INBOX.p&&!INBOX.starting){ if(inboxWanted()) inboxStart(); } else if(INBOX.p&&INBOX.p.disconnected&&!INBOX.p.destroyed){ try{ INBOX.p.reconnect(); }catch(_){} } else inboxFlush(); },30000);
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden){ if(!INBOX.p){ if(inboxWanted()) inboxStart(); } else if(INBOX.p.disconnected){ try{ INBOX.p.reconnect(); }catch(_){} } } });
+const inboxWanted=()=>!!(NET.mode||PROF.friends.length||plist('pend').length||plist('ack').length||plist('reqIn').length);
+setTimeout(()=>{ if(inboxWanted()) inboxStart(); },1200); frBadge();
 
 function leaveRoom(msgKey){
   voiceStop();
@@ -3322,7 +3347,7 @@ syncSnd(); syncLobby(); toLobby();
 })();
 
 /* ---------- loop ---------- */
-let last=performance.now();
+let last=performance.now(), lastR=0;
 /* one simulation step (dt ≤ 0.05 s) */
 function step(dt,now){
   if(game.state==='reveal'){game.revealT-=dt; if(game.revealT<=0){game.state='play';$('reveal').hidden=true;}}
@@ -3339,7 +3364,10 @@ function advance(t,cap){
 }
 function frame(t){
   requestAnimationFrame(frame);
+  if(t-lastR<10.5) return; /* 120/144 Hz screens: render at most about 60-72 fps, the extra frames only drain the battery */
+  const rdt=t-lastR; lastR=t; qMonitor(rdt);
   const fd=Math.min(0.25,Math.max(0,(t-last)/1000)); advance(t,0.25); updateCamera(fd,false); updateHUD();
+  if(!renderer.shadowMap.autoUpdate) renderer.shadowMap.needsUpdate=((QL.fr++)&1)===0;
   renderer.render(scene,camera);
 }
 /* the host keeps the round running for everyone while its tab/app is in the background */
