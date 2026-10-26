@@ -2766,11 +2766,15 @@ async function voiceToggle(){
   if(!VOICE.stream){ VOICE.busy=true;
     voiceKick(); toast(T('v.wait'));
     if(!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia)){ toast(T('v.safari'),'bad'); VOICE.busy=false; return; }
-    try{ VOICE.stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false}); VOICE.live=true; }
-    catch(e){
-      if(e&&(e.name==='OverconstrainedError'||e.name==='TypeError')){ try{ VOICE.stream=await navigator.mediaDevices.getUserMedia({audio:true}); VOICE.live=true; }catch(e2){ e=e2; } }
-      if(!VOICE.stream){ toast(T(e&&e.name==='NotFoundError'?'v.nomic':'v.denied')+' ('+((e&&e.name)||'?')+')','bad'); VOICE.busy=false; voiceUI(); return; }
+    let e=null;
+    try{ if(navigator.audioSession) navigator.audioSession.type='play-and-record'; }catch(_){}
+    /* iPhone Safari throws InvalidStateError while its audio session is switching: ask with the plainest constraints first and retry a few times */
+    const tries=[{audio:true},{audio:true},{audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}},{audio:true}];
+    for(let i=0;i<tries.length&&!VOICE.stream;i++){
+      try{ VOICE.stream=await navigator.mediaDevices.getUserMedia(tries[i]); VOICE.live=true; e=null; }
+      catch(er){ e=er; const nm=er&&er.name; if(nm==='NotAllowedError'||nm==='NotFoundError'||nm==='SecurityError') break; await new Promise(r=>setTimeout(r,450)); }
     }
+    if(!VOICE.stream){ toast(T(e&&e.name==='NotFoundError'?'v.nomic':'v.denied')+' ('+((e&&e.name)||'?')+')','bad'); VOICE.busy=false; voiceUI(); return; }
     VOICE.busy=false; }
   else VOICE.live=!VOICE.live;
   voicePresence(); voiceUI(); voiceTick();
