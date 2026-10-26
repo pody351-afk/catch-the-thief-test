@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: catch-the-thief-peer
+    runtime: docker
+    plan: starter        # free plan sleeps; use a paid plan so players are never stuck waiting
+    healthCheckPath: /
+    envVars:
+      - key: ALLOWED_ORIGINS
+        value: "*"
