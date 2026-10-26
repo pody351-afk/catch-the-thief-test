@@ -1,4 +1,4 @@
-name = "catch-the-thief-match"
+name = "catch-the-thief-mm"
 main = "worker.js"
 compatibility_date = "2025-01-01"
 
