@@ -9,7 +9,7 @@ const server = PeerServer({
   concurrent_limit: +process.env.MAX_PEERS || 5000,   // per process; run several instances behind a load balancer
   alive_timeout: 60000,
   key: process.env.PEER_KEY || 'peerjs',
-  corsOptions: { origin: (process.env.ALLOWED_ORIGINS || '*').split(',') }
+  corsOptions: { origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : true }
 });
 server.on('connection', c => { if (process.env.DEBUG) console.log('+', c.getId()); });
 server.on('disconnect', c => { if (process.env.DEBUG) console.log('-', c.getId()); });
