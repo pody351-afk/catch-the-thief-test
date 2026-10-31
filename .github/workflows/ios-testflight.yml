@@ -1,0 +1,100 @@
+name: iOS → TestFlight
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use the newest Xcode 26 (Apple requires the iOS 26 SDK)
+        run: |
+          X=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          [ -n "$X" ] || { echo "::error::No Xcode 26 on this runner"; ls /Applications; exit 1; }
+          sudo xcode-select -s "$X/Contents/Developer"
+          xcodebuild -version
+
+      - name: Check secrets
+        run: |
+          for v in ASC_KEY_ID ASC_ISSUER_ID APPLE_TEAM_ID; do
+            if [ -z "${!v}" ]; then echo "::error::Missing secret $v"; exit 1; fi
+          done
+          if [ -z "${{ secrets.ASC_KEY_P8 }}" ]; then echo "::error::Missing secret ASC_KEY_P8"; exit 1; fi
+
+      - name: Copy the FULL edition of the game into the app
+        run: |
+          W=ios/CatchTheThief/www
+          rm -rf "$W" && mkdir -p "$W"
+          cp index.html manifest.webmanifest "$W"/
+          cp -R lib fonts icons "$W"/
+          # bundle PeerJS (online play) inside the app instead of loading it from a CDN
+          [ -f "$W/lib/peerjs.min.js" ] || curl -fsSL https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js -o "$W/lib/peerjs.min.js"
+          test -s "$W/lib/peerjs.min.js"
+          [ -f privacy.html ] && cp privacy.html "$W"/ || true
+          python3 - <<'PY'
+          p='ios/CatchTheThief/www/index.html'
+          h=open(p,encoding='utf8').read()
+          assert 'const DEMO=' in h and '<head>' in h
+          h=h.replace('<head>','<head><script>window.TV_CONFIG=Object.assign(window.TV_CONFIG||{},{"edition":"full"});</script>',1)
+          h=h.replace("if('serviceWorker' in navigator)","if(false)")
+          # native app: hide the web-only "install as app / Add to Home Screen" hints
+          h=h.replace('</head>','<style>#iosHint,#installBtn{display:none!important}</style></head>',1)
+          open(p,'w',encoding='utf8').write(h)
+          print('full edition injected')
+          PY
+
+      - name: Install XcodeGen and generate project
+        run: |
+          brew install xcodegen
+          cd ios && xcodegen generate
+
+      - name: Write App Store Connect API key
+        run: |
+          mkdir -p ~/.appstoreconnect/private_keys
+          echo "${{ secrets.ASC_KEY_P8 }}" > ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
+          # accept either the raw .p8 text or a base64 version of it
+          if ! grep -q "BEGIN PRIVATE KEY" ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8; then
+            echo "${{ secrets.ASC_KEY_P8 }}" | base64 --decode > ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
+          fi
+
+      - name: Archive
+        run: |
+          cd ios
+          xcodebuild -project CatchTheThief.xcodeproj -scheme CatchTheThief \
+            -configuration Release -destination 'generic/platform=iOS' \
+            -archivePath $RUNNER_TEMP/CatchTheThief.xcarchive \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8 \
+            -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" CODE_SIGN_STYLE=Automatic \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            archive
+
+      - name: Export and upload to App Store Connect (TestFlight)
+        run: |
+          cat > $RUNNER_TEMP/ExportOptions.plist <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>${APPLE_TEAM_ID}</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict></plist>
+          PLIST
+          xcodebuild -exportArchive \
+            -archivePath $RUNNER_TEMP/CatchTheThief.xcarchive \
+            -exportOptionsPlist $RUNNER_TEMP/ExportOptions.plist \
+            -exportPath $RUNNER_TEMP/export \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8 \
+            -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+          echo "Uploaded build ${{ github.run_number }} to App Store Connect"

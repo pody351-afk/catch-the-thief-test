@@ -1,0 +1,75 @@
+name: iOS check (simulator build + screenshots)
+
+# Builds the iOS app for the iPhone/iPad simulators (no Apple account or signing needed),
+# launches the game on a simulated iPhone and iPad and saves screenshots as an artifact.
+on:
+  workflow_dispatch:
+  push:
+    paths: ['ios/**', 'index.html', 'lib/**', 'fonts/**', '.github/workflows/ios-check.yml']
+
+jobs:
+  check:
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use the newest Xcode 26
+        run: |
+          X=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          sudo xcode-select -s "$X/Contents/Developer"
+          xcodebuild -version
+
+      - name: Copy the FULL edition of the game into the app
+        run: |
+          W=ios/CatchTheThief/www
+          rm -rf "$W" && mkdir -p "$W"
+          cp index.html manifest.webmanifest "$W"/
+          cp -R lib fonts icons "$W"/
+          [ -f privacy.html ] && cp privacy.html "$W"/ || true
+          [ -f "$W/lib/peerjs.min.js" ] || curl -fsSL https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js -o "$W/lib/peerjs.min.js"
+          python3 - <<'PY'
+          p='ios/CatchTheThief/www/index.html'
+          h=open(p,encoding='utf8').read()
+          h=h.replace('<head>','<head><script>window.TV_CONFIG=Object.assign(window.TV_CONFIG||{},{"edition":"full"});</script>',1)
+          h=h.replace("if('serviceWorker' in navigator)","if(false)")
+          # native app: hide the web-only "install as app / Add to Home Screen" hints
+          h=h.replace('</head>','<style>#iosHint,#installBtn{display:none!important}</style></head>',1)
+          open(p,'w',encoding='utf8').write(h)
+          PY
+
+      - name: Generate project and build for the simulator
+        run: |
+          brew install xcodegen
+          cd ios && xcodegen generate
+          xcodebuild -project CatchTheThief.xcodeproj -scheme CatchTheThief -configuration Release \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath $RUNNER_TEMP/dd CODE_SIGNING_ALLOWED=NO build | tail -40
+
+      - name: Run on iPhone and iPad simulators and take screenshots
+        run: |
+          APP=$(ls -d $RUNNER_TEMP/dd/Build/Products/Release-iphonesimulator/*.app | head -1)
+          mkdir -p shots
+          xcrun simctl list devices available | grep -E "iPhone|iPad" | head -40
+          for NAME in "iPhone 17 Pro Max" "iPhone 16 Pro Max" "iPad Pro 13-inch (M5)" "iPad Pro 13-inch (M4)"; do
+            UDID=$(xcrun simctl list devices available | grep -F "$NAME (" | head -1 | grep -oE '[0-9A-F-]{36}')
+            [ -z "$UDID" ] && continue
+            echo "== $NAME $UDID"
+            xcrun simctl boot "$UDID" || true
+            xcrun simctl bootstatus "$UDID" -b
+            xcrun simctl install "$UDID" "$APP"
+            BID=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APP/Info.plist")
+            xcrun simctl launch "$UDID" "$BID"
+            sleep 25
+            SAFE=$(echo "$NAME" | tr ' ()' '___')
+            xcrun simctl io "$UDID" screenshot "shots/${SAFE}-portrait.png"
+            xcrun simctl spawn "$UDID" log show --last 2m --predicate 'process == "Catch the Thief" OR subsystem == "com.apple.WebKit"' --style compact > "shots/${SAFE}-log.txt" 2>&1 || true
+            xcrun simctl shutdown "$UDID" || true
+          done
+          ls -la shots
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-simulator-screenshots
+          path: shots
